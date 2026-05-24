@@ -377,8 +377,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   // --- 🔒 [렌더링] 보안 잠금 상태 UI ---
   if (!activeApiKey) {
     return (
-      <div className="w-80 h-full bg-[#1e293b] border-l border-slate-700 flex flex-col p-6 overflow-y-auto select-none font-sans text-slate-100">
-        <div className="flex-1 flex flex-col justify-center py-6">
+      <div className="w-full lg:w-80 h-80 lg:h-full bg-[#1e293b] border-t lg:border-t-0 lg:border-l border-slate-700 flex flex-col p-5 lg:p-6 overflow-y-auto select-none shrink-0 font-sans text-slate-100">
+        <div className="flex-1 flex flex-col justify-center py-2 lg:py-6">
           <div className="text-center mb-8">
             <div className="inline-flex p-4 rounded-3xl bg-blue-500/10 text-blue-400 border border-blue-500/20 mb-4 shadow-2xl animate-pulse">
               <Shield size={40} />
@@ -540,7 +540,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   // --- 🎨 [렌더링] 일반 편집 화면 + 상단 보안 배지 ---
   return (
-    <div className="w-80 h-full bg-[#1e293b] border-l border-slate-700 flex flex-col p-6 overflow-y-auto font-sans text-slate-100">
+    <div className="w-full lg:w-80 h-72 lg:h-full bg-[#1e293b] border-t lg:border-t-0 lg:border-l border-slate-700 flex flex-col p-4 lg:p-6 overflow-y-auto overscroll-contain shrink-0 font-sans text-slate-100">
       
       {/* 🔒 상단 보안 컨트롤 배지 */}
       <div className="mb-6 pb-4 border-b border-slate-800/80">

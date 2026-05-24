@@ -21,6 +21,24 @@ const App: React.FC = () => {
   const [selection, setSelection] = useState<Rect | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!window.visualViewport) return;
+    
+    const handleResize = () => {
+      setViewportHeight(window.visualViewport ? window.visualViewport.height : window.innerHeight);
+    };
+    
+    window.visualViewport.addEventListener('resize', handleResize);
+    window.visualViewport.addEventListener('scroll', handleResize);
+    handleResize();
+    
+    return () => {
+      window.visualViewport?.removeEventListener('resize', handleResize);
+      window.visualViewport?.removeEventListener('scroll', handleResize);
+    };
+  }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -141,33 +159,36 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#0f172a] text-slate-100 font-sans">
-      <header className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-[#1e293b] shrink-0">
-        <div className="flex items-center gap-4">
-          <div className="bg-blue-600 p-2 rounded-lg"><FileText size={20} /></div>
+    <div 
+      className="flex flex-col bg-[#0f172a] text-slate-100 font-sans overflow-hidden"
+      style={{ height: viewportHeight ? `${viewportHeight}px` : '100vh' }}
+    >
+      <header className="h-16 border-b border-slate-800 flex items-center justify-between px-4 sm:px-6 bg-[#1e293b] shrink-0">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="bg-blue-600 p-2 rounded-lg"><FileText size={18} className="sm:w-5 sm:h-5" /></div>
           <div>
-            <h1 className="text-lg font-bold tracking-tight">Slide Editor</h1>
-            <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">AI Power</p>
+            <h1 className="text-base sm:text-lg font-bold tracking-tight">Slide Editor</h1>
+            <p className="text-[8px] sm:text-[9px] text-slate-500 uppercase tracking-widest font-black">AI Power</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors text-sm font-medium border border-slate-600">
-            <FileUp size={18} /><span>파일 업로드</span>
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          <label className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-slate-700 hover:bg-slate-600 rounded-lg cursor-pointer transition-colors text-xs sm:text-sm font-medium border border-slate-600">
+            <FileUp size={16} /><span className="hidden sm:inline">파일 업로드</span>
             <input type="file" accept=".pdf,image/*" className="hidden" onChange={handleFileUpload} />
           </label>
-          <div className="w-px h-6 bg-slate-700 mx-2"></div>
-          <button onClick={handleDownloadImages} disabled={slides.length === 0} className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-lg text-sm border border-slate-700 transition-all">
-            <Download size={18} /><span>이미지 저장</span>
+          <div className="w-px h-5 bg-slate-700 mx-1"></div>
+          <button onClick={handleDownloadImages} disabled={slides.length === 0} className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-lg text-xs sm:text-sm border border-slate-700 transition-all">
+            <Download size={16} /><span className="hidden sm:inline">이미지 저장</span>
           </button>
-          <button onClick={handleDownloadPdf} disabled={slides.length === 0} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold shadow-lg border border-blue-500/50">
-            <FileText size={18} /><span>PDF 다운로드</span>
+          <button onClick={handleDownloadPdf} disabled={slides.length === 0} className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs sm:text-sm font-bold shadow-lg border border-blue-500/50">
+            <FileText size={16} /><span className="hidden sm:inline">PDF 다운로드</span>
           </button>
         </div>
       </header>
-      <main className="flex flex-1 overflow-hidden">
-        <aside className="w-20 border-r border-slate-800 bg-[#1e293b] flex flex-col items-center py-6 gap-6 shrink-0">
-          <button onClick={handleUndo} className="p-3 rounded-xl hover:bg-slate-700 text-slate-400" title="실행 취소"><History size={24} /></button>
-          <button onClick={() => { setSlides(prev => prev.map((s, idx) => idx === activeSlideIdx ? {...s, overlays: []} : s)); setSelectedOverlayId(null); }} className="p-3 rounded-xl hover:bg-red-900/20 hover:text-red-400 text-slate-400" title="전체 삭제"><Trash2 size={24} /></button>
+      <main className="flex flex-col lg:flex-row flex-1 overflow-hidden relative">
+        <aside className="w-full h-14 border-t border-slate-800 lg:w-20 lg:h-full lg:border-r lg:border-t-0 bg-[#1e293b] flex flex-row lg:flex-col items-center justify-center lg:justify-start py-2 lg:py-6 gap-6 shrink-0 order-last lg:order-first">
+          <button onClick={handleUndo} className="p-2 lg:p-3 rounded-xl hover:bg-slate-700 text-slate-400" title="실행 취소"><History size={20} className="lg:w-6 lg:h-6" /></button>
+          <button onClick={() => { setSlides(prev => prev.map((s, idx) => idx === activeSlideIdx ? {...s, overlays: []} : s)); setSelectedOverlayId(null); }} className="p-2 lg:p-3 rounded-xl hover:bg-red-900/20 hover:text-red-400 text-slate-400" title="전체 삭제"><Trash2 size={20} className="lg:w-6 lg:h-6" /></button>
         </aside>
         <div className="flex-1 flex flex-col bg-slate-950 relative">
           {isProcessing ? (
