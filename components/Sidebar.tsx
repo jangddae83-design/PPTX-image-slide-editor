@@ -671,11 +671,13 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">크기</label>
                 <input 
                   type="number" 
-                  value={fontSize} 
+                  value={isNaN(fontSize) ? '' : fontSize} 
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
                     setFontSize(val);
-                    if (isEditing) updateSelectedOverlay({ fontSize: val });
+                    if (isEditing && !isNaN(val)) {
+                      updateSelectedOverlay({ fontSize: val });
+                    }
                   }}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" 
                 />
@@ -762,11 +764,13 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <input 
                     type="number" 
                     step="0.1"
-                    value={letterSpacing} 
+                    value={isNaN(letterSpacing) ? '' : letterSpacing} 
                     onChange={(e) => {
                       const val = parseFloat(e.target.value);
                       setLetterSpacing(val);
-                      if (isEditing) updateSelectedOverlay({ letterSpacing: val });
+                      if (isEditing && !isNaN(val)) {
+                        updateSelectedOverlay({ letterSpacing: val });
+                      }
                     }}
                     className="w-full bg-transparent py-2 text-sm focus:outline-none" 
                   />

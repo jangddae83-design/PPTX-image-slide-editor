@@ -35,6 +35,9 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
   const [isSpacePressed, setIsSpacePressed] = useState(false);
 
+  // 🖐️ 손 도구 (Hand / Pan Tool) 활성화 상태
+  const [isHandTool, setIsHandTool] = useState(false);
+
   // --- 🔒 [성능 최적화] 터치/이동 중 60fps 부드러운 드로잉을 위한 Ref 버퍼 객체 ---
   const zoomRef = useRef(zoom);
   const offsetRef = useRef(offset);
@@ -311,7 +314,8 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
   // --- 🖱️ 마우스 이벤트 핸들러 ---
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (isSpacePressed || e.button === 1) {
+    // 🖐️ 손 도구 활성화 시 단일 클릭/드래그가 평행 이동(Panning)으로 변경됩니다.
+    if (isHandTool || isSpacePressed || e.button === 1) {
       setIsPanning(true);
       setStartPoint(getScreenCoords(e));
       return;
@@ -352,7 +356,7 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     const canvasP = getCanvasCoords(e);
     
     if (canvasRef.current) {
-      if (isSpacePressed || isPanning) canvasRef.current.style.cursor = isPanning ? 'grabbing' : 'grab';
+      if (isHandTool || isSpacePressed || isPanning) canvasRef.current.style.cursor = isPanning ? 'grabbing' : 'grab';
       else if (isDraggingOverlay) canvasRef.current.style.cursor = 'grabbing';
       else if (isResizingSelection) canvasRef.current.style.cursor = 'nwse-resize';
       else if (slide.overlays.some(o => isPointInRect(canvasP, o.rect))) canvasRef.current.style.cursor = 'pointer';
@@ -360,7 +364,7 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
       else canvasRef.current.style.cursor = 'default';
     }
 
-    // 1. 화면 패닝 처리
+    // 1. 화면 평행 이동(Panning) 처리
     if (isPanning && startPoint) {
       const dx = screenP.x - startPoint.x;
       const dy = screenP.y - startPoint.y;
@@ -460,8 +464,8 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
       const isOverOverlay = slide.overlays.some(o => isPointInRect(p, o.rect));
       const isOverHandle = selection && getHandleAt(p, selection);
       
-      // 조작 시 스크롤 간섭 예방을 위한 prevent
-      if (isOverOverlay || isOverHandle || !isSpacePressed) {
+      // 🖐️ 손 도구 활성화 되었거나 드래그 중인 게 없다면 브라우저 탄성 바운싱을 확실히 차단합니다.
+      if (isHandTool || isOverOverlay || isOverHandle || !isSpacePressed) {
         e.preventDefault();
       }
 
@@ -507,7 +511,8 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       
-      if (isDrawing || isDraggingOverlay || isResizingSelection) {
+      // 🖐️ 손도구 상태거나 활성 조작 시 기본 스크롤 완벽 차단
+      if (isHandTool || isDrawing || isDraggingOverlay || isResizingSelection) {
         e.preventDefault();
       }
       
@@ -580,6 +585,35 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }
   };
 
+  // --- 📱 모바일/태블릿 수동 터치 리스너 결합 (passive: false를 위해 반드시 DOM 직접 등록 필요) ---
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onTouchStart = (ev: TouchEvent) => {
+      handleTouchStart(ev as any);
+    };
+
+    const onTouchMove = (ev: TouchEvent) => {
+      handleTouchMove(ev as any);
+    };
+
+    const onTouchEnd = (ev: TouchEvent) => {
+      handleTouchEnd(ev as any);
+    };
+
+    // { passive: false } 옵션을 부여해 브라우저 기본 제스처 줌을 완벽하게 오버라이드합니다.
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('touchstart', onTouchStart);
+      canvas.removeEventListener('touchmove', onTouchMove);
+      canvas.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [image, slide.overlays, selection, isSpacePressed, isHandTool, isDrawing, isDraggingOverlay, isResizingSelection, isPanning, startPoint]);
+
   return (
     <div ref={containerRef} className="flex-1 relative overflow-hidden bg-[#0f172a] flex items-center justify-center select-none touch-none">
       <canvas 
@@ -588,9 +622,6 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
         onMouseMove={handleMouseMove} 
         onMouseUp={handleMouseUp} 
         onMouseLeave={handleMouseUp} 
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
         onContextMenu={(e) => e.preventDefault()} 
         className="block w-full h-full" 
       />
@@ -608,8 +639,36 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
         </div>
       </div>
 
-      {/* 🔍 플로팅 유리질감 줌 컨트롤 툴바 */}
-      <div className="absolute bottom-4 left-4 bg-slate-800/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700 shadow-2xl flex items-center gap-2.5 text-slate-200">
+      {/* 🔍 플로팅 유리질감 줌 및 도구 컨트롤 툴바 */}
+      <div className="absolute bottom-4 left-4 bg-slate-800/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700 shadow-2xl flex items-center gap-2.5 text-slate-200">
+        
+        {/* 🖐️ 손도구(Hand) / 선택도구(Select) 스위치 툴바 */}
+        <div className="flex bg-slate-900/60 p-0.5 rounded-lg border border-slate-750 shrink-0">
+          <button 
+            onClick={() => setIsHandTool(false)}
+            className={`w-6 h-6 rounded flex items-center justify-center transition-all ${!isHandTool ? 'bg-slate-700 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
+            title="선택 도구 (Selection)"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="3 3 10.07 19.97 12.58 12.58 19.97 10.07 3 3" />
+            </svg>
+          </button>
+          <button 
+            onClick={() => setIsHandTool(true)}
+            className={`w-6 h-6 rounded flex items-center justify-center transition-all ${isHandTool ? 'bg-slate-700 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
+            title="손 도구 (Hand / Pan)"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5" />
+              <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v6" />
+              <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
+              <path d="M18 8a2 2 0 0 1 2 2v9a6 6 0 0 1-6 6v0a6 6 0 0 1-6-6v-1" />
+            </svg>
+          </button>
+        </div>
+        
+        <div className="w-px h-4 bg-slate-700"></div>
+
         <button 
           onClick={() => {
             const nextZoom = Math.max(MIN_ZOOM, zoomRef.current - 0.2);
