@@ -538,25 +538,26 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
         // 1. 배율 계산 및 범위 제한
         const targetZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, touchStartRef.current.zoom * factor));
         
-        // 2. 중심점 이동 감지 (팬)
-        const dx = currentCenter.x - touchStartRef.current.center.x;
-        const dy = currentCenter.y - touchStartRef.current.center.y;
-        
-        // 3. 핀치 중심 위치 기준 오프셋 보정
+        // 2. 기준 핀치 초기 중심점 및 피벗 계산
         const rect = canvas.getBoundingClientRect();
-        const centerCanvasX = currentCenter.x - rect.left;
-        const centerCanvasY = currentCenter.y - rect.top;
+        const startCenterCanvasX = touchStartRef.current.center.x - rect.left;
+        const startCenterCanvasY = touchStartRef.current.center.y - rect.top;
 
         const startOffset = touchStartRef.current.offset;
         const oldZoom = touchStartRef.current.zoom;
 
-        const wx = (centerCanvasX - startOffset.x) / oldZoom;
-        const wy = (centerCanvasY - startOffset.y) / oldZoom;
+        const wx = (startCenterCanvasX - startOffset.x) / oldZoom;
+        const wy = (startCenterCanvasY - startOffset.y) / oldZoom;
 
+        // 3. 중심점 실시간 이동 벡터 (드래그/팬 델타값)
+        const dx = currentCenter.x - touchStartRef.current.center.x;
+        const dy = currentCenter.y - touchStartRef.current.center.y;
+
+        // 4. 피벗 매트릭스에 델타 벡터를 더해 최종 스케일 오프셋 산출
         zoomRef.current = targetZoom;
         offsetRef.current = {
-          x: centerCanvasX - wx * targetZoom + dx,
-          y: centerCanvasY - wy * targetZoom + dy
+          x: startCenterCanvasX - wx * targetZoom + dx,
+          y: startCenterCanvasY - wy * targetZoom + dy
         };
 
         requestAnimationFrame(draw);
