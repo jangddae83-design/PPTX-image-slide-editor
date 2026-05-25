@@ -210,7 +210,7 @@ const App: React.FC = () => {
           <button onClick={handleUndo} className="p-2 lg:p-3 rounded-xl hover:bg-slate-700 text-slate-400" title="실행 취소"><History size={20} className="lg:w-6 lg:h-6" /></button>
           <button onClick={() => { setSlides(prev => prev.map((s, idx) => idx === activeSlideIdx ? {...s, overlays: []} : s)); setSelectedOverlayId(null); }} className="p-2 lg:p-3 rounded-xl hover:bg-red-900/20 hover:text-red-400 text-slate-400" title="전체 삭제"><Trash2 size={20} className="lg:w-6 lg:h-6" /></button>
         </aside>
-        <div className="flex-1 flex flex-col bg-slate-950 relative">
+        <div className="flex-1 flex flex-col bg-slate-950 relative min-h-0 overflow-y-auto">
           {isProcessing ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-4">
               <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
