@@ -22,24 +22,8 @@ const App: React.FC = () => {
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
-  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (!window.visualViewport) return;
-    
-    const handleResize = () => {
-      setViewportHeight(window.visualViewport ? window.visualViewport.height : window.innerHeight);
-    };
-    
-    window.visualViewport.addEventListener('resize', handleResize);
-    window.visualViewport.addEventListener('scroll', handleResize);
-    handleResize();
-    
-    return () => {
-      window.visualViewport?.removeEventListener('resize', handleResize);
-      window.visualViewport?.removeEventListener('scroll', handleResize);
-    };
-  }, []);
+  // iOS Safari의 가상 키보드와 충돌하는 visualViewport 리스너를 제거하고 CSS(100dvh 또는 fixed)에 온전히 맡깁니다.
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -180,8 +164,8 @@ const App: React.FC = () => {
 
   return (
     <div 
-      className="flex flex-col bg-[#0f172a] text-slate-100 font-sans overflow-hidden w-full max-w-[100vw] overflow-x-hidden"
-      style={{ height: viewportHeight ? `${viewportHeight}px` : '100vh' }}
+      className="flex flex-col bg-[#0f172a] text-slate-100 font-sans overflow-hidden w-full max-w-[100vw] overflow-x-hidden absolute inset-0"
+      style={{ height: '100dvh' }}
     >
       <header className="h-16 border-b border-slate-800 flex items-center justify-between px-4 sm:px-6 bg-[#1e293b] shrink-0">
         <div className="flex items-center gap-3 sm:gap-4">
