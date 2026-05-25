@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [selection, setSelection] = useState<Rect | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
   useEffect(() => {
@@ -46,20 +47,38 @@ const App: React.FC = () => {
     setIsProcessing(true);
     try {
       if (file.type === 'application/pdf') {
-        const converted = await convertPdfToImages(file);
-        setSlides(converted);
+        setProgress(0);
+        const converted = await convertPdfToImages(file, (current, total) => {
+          setProgress(Math.round((current / total) * 100));
+        });
+        if (converted.length === 0) {
+          alert('변환된 페이지가 없습니다. 파일이 손상되었거나 메모리가 부족합니다.');
+          return;
+        }
+        // [중요 수정] 기존 슬라이드가 차지하던 Blob URL 메모리를 명시적으로 해제하여 누수 방지
+        setSlides(prev => {
+          prev.forEach(s => {
+            if (s.dataUrl.startsWith('blob:')) URL.revokeObjectURL(s.dataUrl);
+          });
+          return converted;
+        });
       } else if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = (ev) => {
           const img = new Image();
           img.onload = () => {
-            setSlides([{
-              index: 0,
-              dataUrl: ev.target?.result as string,
-              width: img.width,
-              height: img.height,
-              overlays: []
-            }]);
+            setSlides(prev => {
+              prev.forEach(s => {
+                if (s.dataUrl.startsWith('blob:')) URL.revokeObjectURL(s.dataUrl);
+              });
+              return [{
+                index: 0,
+                dataUrl: ev.target?.result as string,
+                width: img.width,
+                height: img.height,
+                overlays: []
+              }];
+            });
           };
           img.src = ev.target?.result as string;
         };
@@ -72,6 +91,7 @@ const App: React.FC = () => {
       alert('파일 변환 중 오류가 발생했습니다.');
     } finally {
       setIsProcessing(false);
+      setProgress(null);
     }
   };
 
@@ -194,7 +214,9 @@ const App: React.FC = () => {
           {isProcessing ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-4">
               <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-slate-400 font-medium">변환 중...</p>
+              <p className="text-slate-400 font-medium">
+                {progress !== null ? `PDF 변환 중... ${progress}%` : '파일 로딩 중...'}
+              </p>
             </div>
           ) : slides.length > 0 ? (
             <>

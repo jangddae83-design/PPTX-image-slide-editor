@@ -253,7 +253,8 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
       }
     };
     return () => { isCancelled = true; };
-  }, [slide.dataUrl, scheduleDraw]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slide.dataUrl]);
 
   // ResizeObserver 반응형 체인
   useEffect(() => {

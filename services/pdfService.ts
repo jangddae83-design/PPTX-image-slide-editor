@@ -6,29 +6,103 @@ declare const jspdf: any;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-export const convertPdfToImages = async (file: File): Promise<SlideData[]> => {
-  const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-  const pdf = await loadingTask.promise;
+const MAX_CANVAS_AREA = 5000000; // 5 Megapixels
+
+export const convertPdfToImages = async (
+  file: File,
+  onProgress?: (current: number, total: number) => void
+): Promise<SlideData[]> => {
+  const fileUrl = URL.createObjectURL(file);
+  let pdf: any = null;
   const slides: SlideData[] = [];
 
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 2.0 });
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
+  try {
+    const loadingTask = pdfjsLib.getDocument({ url: fileUrl });
+    pdf = await loadingTask.promise;
 
-    await page.render({ canvasContext: context, viewport }).promise;
-    
-    slides.push({
-      index: i - 1,
-      dataUrl: canvas.toDataURL('image/png'),
-      width: viewport.width,
-      height: viewport.height,
-      overlays: []
-    });
+    for (let i = 1; i <= pdf.numPages; i++) {
+      let page: any = null;
+      try {
+        page = await pdf.getPage(i);
+        
+        // 1. 동적 스케일링 (Max 5MP Area)
+        let scale = 2.0;
+        let viewport = page.getViewport({ scale });
+        const area = viewport.width * viewport.height;
+        
+        if (area > MAX_CANVAS_AREA) {
+          const baseViewport = page.getViewport({ scale: 1.0 });
+          scale = Math.sqrt(MAX_CANVAS_AREA / (baseViewport.width * baseViewport.height));
+          scale = Math.min(scale, 2.0);
+          viewport = page.getViewport({ scale });
+        }
+
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        
+        let renderSuccess = false;
+        let currentScale = scale;
+        
+        // 2. OOM 방어 폴백 (Retry)
+        while (currentScale >= 0.5 && !renderSuccess) {
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+          
+          try {
+            await page.render({ canvasContext: context, viewport }).promise;
+            renderSuccess = true;
+          } catch (e) {
+            console.warn(`[PDF] 렌더링 실패 (scale: ${currentScale}), 해상도를 낮춰 재시도합니다.`, e);
+            if (currentScale <= 0.5) break;
+            currentScale -= 0.5;
+            viewport = page.getViewport({ scale: currentScale });
+          }
+        }
+
+        if (renderSuccess) {
+          // 3. Base64 메모리 폭발 해체 (Blob Object URL)
+          const blobUrl = await new Promise<string>((resolve, reject) => {
+            canvas.toBlob((blob) => {
+              if (blob) {
+                resolve(URL.createObjectURL(blob));
+              } else {
+                reject(new Error('Canvas to Blob conversion failed'));
+              }
+            }, 'image/jpeg', 0.9); // JPEG로 메모리 추가 절약
+          });
+
+          slides.push({
+            index: i - 1,
+            dataUrl: blobUrl,
+            width: viewport.width,
+            height: viewport.height,
+            overlays: []
+          });
+        }
+      } catch (e) {
+        console.error(`[PDF] 페이지 ${i} 변환 중 치명적 오류:`, e);
+      } finally {
+        // 4. 페이지 메모리 해제 (Memory Leak Fix)
+        if (page && typeof page.cleanup === 'function') {
+          page.cleanup();
+        }
+      }
+
+      if (onProgress) {
+        onProgress(i, pdf.numPages);
+      }
+      // 5. Watchdog Kill 방어 (Macrotask Yielding)
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  } catch (error) {
+    console.error('PDF 로드 실패:', error);
+    throw error;
+  } finally {
+    // 6. PDF 인스턴스 메모리 해제 및 URL Revoke
+    if (pdf && typeof pdf.destroy === 'function') {
+      pdf.destroy();
+    }
+    URL.revokeObjectURL(fileUrl);
   }
 
   return slides;
