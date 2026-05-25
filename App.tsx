@@ -180,7 +180,7 @@ const App: React.FC = () => {
 
   return (
     <div 
-      className="flex flex-col bg-[#0f172a] text-slate-100 font-sans overflow-hidden"
+      className="flex flex-col bg-[#0f172a] text-slate-100 font-sans overflow-hidden w-full max-w-[100vw] overflow-x-hidden"
       style={{ height: viewportHeight ? `${viewportHeight}px` : '100vh' }}
     >
       <header className="h-16 border-b border-slate-800 flex items-center justify-between px-4 sm:px-6 bg-[#1e293b] shrink-0">
