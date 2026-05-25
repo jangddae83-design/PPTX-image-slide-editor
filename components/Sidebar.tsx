@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Rect, SlideData, TextOverlay, OCRResult, VerticalAlign, HorizontalAlign } from '../types';
 import { analyzeTextInImage } from '../services/geminiService';
 import { encryptText, decryptText } from '../services/cryptoService';
@@ -31,6 +31,7 @@ interface SidebarProps {
   selectedOverlayId: string | null;
   onApplyOverlay: (overlay: TextOverlay) => void;
   onUpdateOverlays: (overlays: TextOverlay[]) => void;
+  onOverlaySelect: (id: string | null) => void;
 }
 
 const FONTS = [
@@ -46,7 +47,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   selection, 
   selectedOverlayId,
   onApplyOverlay,
-  onUpdateOverlays
+  onUpdateOverlays,
+  onOverlaySelect
 }) => {
   // --- 🔒 보안 관련 상태 추가 ---
   const [activeApiKey, setActiveApiKey] = useState<string | null>(null);
@@ -59,6 +61,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showTempKeyInput, setShowTempKeyInput] = useState(false);
   const [tempApiKeyInput, setTempApiKeyInput] = useState('');
+
+  // 비동기 통신 중 선택 영역 스냅샷 (레이스 컨디션 방어)
+  const analyzedSelectionRef = useRef<Rect | null>(null);
 
   // --- 기존 에디터 상태 ---
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -315,6 +320,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const handleAnalyze = async () => {
     if (!selection || !activeSlide || !activeApiKey) return;
     setIsAnalyzing(true);
+    // 현재 선택 영역을 스냅샷으로 고정하여 분석 종료 후에도 해당 영역에 텍스트가 적용되도록 함
+    analyzedSelectionRef.current = { ...selection };
     try {
       const bgResult = await getCroppedCanvas(true);
       if (bgResult) {
@@ -341,6 +348,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       setLetterSpacing(0);
     } catch (err) {
       console.error(err);
+      // API 침묵의 실패(Silent Error) 방어: 에러 메시지를 UI에 출력
+      setOcrResult({ text: 'API 통신에 실패했습니다. 키 유효성이나 네트워크를 확인해주세요.', fontSize: 16, fontColor: '#ff0000', fontFamily: 'Inter', fontWeight: 'bold' });
+      setReplacementText('오류 발생');
     } finally {
       setIsAnalyzing(false);
     }
@@ -355,10 +365,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleApply = () => {
-    if (!selection) return;
+    // 분석 당시의 선택 영역을 우선 적용 (비동기 상태 불일치 방지)
+    const targetSelection = analyzedSelectionRef.current || selection;
+    if (!targetSelection) return;
+    
     onApplyOverlay({
       id: Math.random().toString(36).substr(2, 9),
-      rect: { ...selection },
+      rect: { ...targetSelection },
       originalText: ocrResult?.text || '',
       newText: replacementText,
       fontSize,
@@ -370,6 +383,15 @@ const Sidebar: React.FC<SidebarProps> = ({
       hAlign,
       letterSpacing
     });
+    
+    analyzedSelectionRef.current = null;
+  };
+
+  const handleDeleteOverlay = () => {
+    if (!activeSlide || !selectedOverlayId) return;
+    const newOverlays = activeSlide.overlays.filter(o => o.id !== selectedOverlayId);
+    onUpdateOverlays(newOverlays);
+    onOverlaySelect(null);
   };
 
   const isEditing = !!selectedOverlayId;
@@ -778,7 +800,23 @@ const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
 
-            {!isEditing && (
+            {isEditing ? (
+              <div className="flex gap-2 mt-2">
+                <button 
+                  onClick={() => onOverlaySelect(null)}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 font-bold py-3 rounded-lg flex items-center justify-center transition-all shadow-lg active:scale-95"
+                >
+                  <CheckCircle2 size={18} className="mr-2" /> 수정 완료
+                </button>
+                <button 
+                  onClick={handleDeleteOverlay}
+                  className="bg-red-900/40 hover:bg-red-900/60 text-red-400 font-bold px-4 rounded-lg flex items-center justify-center transition-all border border-red-900/30"
+                  title="오버레이 삭제"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            ) : (
               <button 
                 onClick={handleApply} 
                 disabled={!selection} 

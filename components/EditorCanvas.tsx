@@ -19,6 +19,7 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const zoomTextRef = useRef<HTMLSpanElement>(null);
   
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
@@ -29,13 +30,14 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [isDraggingOverlay, setIsDraggingOverlay] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   
+  // 텍스트 오버레이 드래그 시 글로벌 리렌더링(120Hz) 방지를 위한 로컬 델타 Ref
+  const dragOverlayDeltaRef = useRef({ dx: 0, dy: 0 });
+  
   const [dragType, setDragType] = useState<'move' | HandleType | null>(null);
   const [startPoint, setStartPoint] = useState<Point | null>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
 
   const [isSpacePressed, setIsSpacePressed] = useState(false);
-
-  // 🖐️ 손 도구 (Hand / Pan Tool) 활성화 상태
   const [isHandTool, setIsHandTool] = useState(false);
 
   // --- 🔒 [성능 최적화] 터치/이동 중 60fps 부드러운 드로잉을 위한 Ref 버퍼 객체 ---
@@ -48,134 +50,12 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     offset: Point;
     center: Point;
   } | null>(null);
+  const rafId = useRef<number | null>(null);
 
-  // Ref 버퍼와 React 상태값 동기화
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { offsetRef.current = offset; }, [offset]);
 
-  useEffect(() => {
-    offsetRef.current = offset;
-  }, [offset]);
-
-  // 키보드 이동 이벤트
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-
-      if (e.code === 'Space') {
-        if (isInput) return;
-        setIsSpacePressed(e.type === 'keydown');
-        if (e.type === 'keydown') e.preventDefault();
-        return;
-      }
-
-      if (e.type === 'keydown' && !isInput) {
-        let moved = false;
-        if (e.code === 'ArrowUp') {
-          offsetRef.current = { ...offsetRef.current, y: offsetRef.current.y + PAN_STEP };
-          moved = true;
-          e.preventDefault();
-        } else if (e.code === 'ArrowDown') {
-          offsetRef.current = { ...offsetRef.current, y: offsetRef.current.y - PAN_STEP };
-          moved = true;
-          e.preventDefault();
-        } else if (e.code === 'ArrowLeft') {
-          offsetRef.current = { ...offsetRef.current, x: offsetRef.current.x + PAN_STEP };
-          moved = true;
-          e.preventDefault();
-        } else if (e.code === 'ArrowRight') {
-          offsetRef.current = { ...offsetRef.current, x: offsetRef.current.x - PAN_STEP };
-          moved = true;
-          e.preventDefault();
-        }
-
-        if (moved) {
-          setOffset(offsetRef.current);
-          requestAnimationFrame(draw);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKey);
-    window.addEventListener('keyup', handleKey);
-    return () => {
-      window.removeEventListener('keydown', handleKey);
-      window.removeEventListener('keyup', handleKey);
-    };
-  }, []);
-
-  // 이미지 초기 로딩 시 크기 맞춤
-  useEffect(() => {
-    const img = new Image();
-    img.src = slide.dataUrl;
-    img.onload = () => {
-      setImage(img);
-      if (containerRef.current) {
-        const { clientWidth, clientHeight } = containerRef.current;
-        const scale = Math.min(
-          (clientWidth - 80) / img.width,
-          (clientHeight - 80) / img.height
-        );
-        zoomRef.current = scale;
-        setZoom(scale);
-        
-        const initialOffset = {
-          x: (clientWidth - img.width * scale) / 2,
-          y: (clientHeight - img.height * scale) / 2
-        };
-        offsetRef.current = initialOffset;
-        setOffset(initialOffset);
-      }
-    };
-  }, [slide.dataUrl]);
-
-  // 마우스 휠 스냅 줌
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const handleWheelNative = (e: WheelEvent) => {
-      if (e.ctrlKey) {
-        e.preventDefault();
-        const delta = -e.deltaY;
-        const factor = delta > 0 ? (1 + ZOOM_STEP) : (1 - ZOOM_STEP);
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-
-        const currentZoom = zoomRef.current;
-        const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, currentZoom * factor));
-        
-        const wx = (mouseX - offsetRef.current.x) / currentZoom;
-        const wy = (mouseY - offsetRef.current.y) / currentZoom;
-        
-        zoomRef.current = newZoom;
-        offsetRef.current = {
-          x: mouseX - wx * newZoom,
-          y: mouseY - wy * newZoom
-        };
-        
-        setZoom(newZoom);
-        setOffset(offsetRef.current);
-        requestAnimationFrame(draw);
-      } else if (!isSpacePressed) {
-        offsetRef.current = {
-          x: offsetRef.current.x - e.deltaX,
-          y: offsetRef.current.y - e.deltaY
-        };
-        setOffset(offsetRef.current);
-        requestAnimationFrame(draw);
-      }
-    };
-
-    container.addEventListener('wheel', handleWheelNative, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheelNative);
-  }, [isSpacePressed]);
-
-  // --- 🎨 [해상도 보정] 2D 캔버스 드로잉 엔진 (Retina 대응) ---
+  // --- 🎨 [해상도 보정 및 텍스트 렌더링] 2D 캔버스 드로잉 엔진 ---
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
@@ -184,7 +64,6 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
-    // 고해상도 백킹 스토어 스케일링 설정
     if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
@@ -192,23 +71,26 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
-    
-    // Retina 화소 해상도 매칭
     ctx.scale(dpr, dpr);
-
     ctx.translate(offsetRef.current.x, offsetRef.current.y);
     ctx.scale(zoomRef.current, zoomRef.current);
-
     ctx.drawImage(image, 0, 0);
 
+    const dragDelta = isDraggingOverlay ? dragOverlayDeltaRef.current : { dx: 0, dy: 0 };
+
     slide.overlays.forEach(overlay => {
+      // 드래그 중인 오버레이는 임시 델타값을 적용하여 렌더링 (리액트 상태 우회)
+      const currentRect = (overlay.id === selectedOverlayId) 
+        ? { ...overlay.rect, x: overlay.rect.x + dragDelta.dx, y: overlay.rect.y + dragDelta.dy }
+        : overlay.rect;
+
       ctx.fillStyle = overlay.backgroundColor;
-      ctx.fillRect(overlay.rect.x, overlay.rect.y, overlay.rect.width, overlay.rect.height);
+      ctx.fillRect(currentRect.x, currentRect.y, currentRect.width, currentRect.height);
       
       if (overlay.id === selectedOverlayId) {
         ctx.strokeStyle = COLORS.primary;
         ctx.lineWidth = 2 / zoomRef.current;
-        ctx.strokeRect(overlay.rect.x, overlay.rect.y, overlay.rect.width, overlay.rect.height);
+        ctx.strokeRect(currentRect.x, currentRect.y, currentRect.width, currentRect.height);
       }
 
       ctx.fillStyle = overlay.fontColor;
@@ -218,20 +100,41 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
         ctx.letterSpacing = `${overlay.letterSpacing || 0}px`;
       }
       
-      const lines = overlay.newText.split('\n');
+      // Auto Word-Wrap 엔진 적용
+      const maxWidth = currentRect.width > 8 ? currentRect.width - 4 : currentRect.width;
+      const paragraphs = overlay.newText.split('\n');
+      const lines: string[] = [];
+      
+      paragraphs.forEach(p => {
+        if (p.length === 0) { lines.push(''); return; }
+        let currentLine = '';
+        for (let i = 0; i < p.length; i++) {
+          const char = p[i];
+          const testLine = currentLine + char;
+          const metrics = ctx.measureText(testLine);
+          if (metrics.width > maxWidth && currentLine.length > 0) {
+            lines.push(currentLine);
+            currentLine = char;
+          } else {
+            currentLine = testLine;
+          }
+        }
+        lines.push(currentLine);
+      });
+
       const lineHeight = overlay.fontSize * 1.2;
       const totalTextHeight = lines.length * lineHeight;
 
       ctx.textAlign = (overlay.hAlign || 'left') as CanvasTextAlign;
       ctx.textBaseline = 'top';
 
-      let tx = overlay.rect.x;
-      if (overlay.hAlign === 'center') tx = overlay.rect.x + overlay.rect.width / 2;
-      else if (overlay.hAlign === 'right') tx = overlay.rect.x + overlay.rect.width;
+      let tx = currentRect.x + 2; // slight padding
+      if (overlay.hAlign === 'center') tx = currentRect.x + currentRect.width / 2;
+      else if (overlay.hAlign === 'right') tx = currentRect.x + currentRect.width - 2;
 
-      let ty = overlay.rect.y;
-      if (overlay.vAlign === 'middle') ty = overlay.rect.y + (overlay.rect.height - totalTextHeight) / 2;
-      else if (overlay.vAlign === 'bottom') ty = overlay.rect.y + overlay.rect.height - totalTextHeight;
+      let ty = currentRect.y;
+      if (overlay.vAlign === 'middle') ty = currentRect.y + (currentRect.height - totalTextHeight) / 2;
+      else if (overlay.vAlign === 'bottom') ty = currentRect.y + currentRect.height - totalTextHeight;
 
       lines.forEach((line, index) => {
         ctx.fillText(line, tx, ty + index * lineHeight);
@@ -270,39 +173,117 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
         );
       });
     }
-
     ctx.restore();
-  }, [image, slide.overlays, selection, selectedOverlayId]);
 
-  useEffect(() => {
-    draw();
+    // DOM Direct Injection (UI 실시간 동기화)
+    if (zoomTextRef.current) {
+      zoomTextRef.current.innerText = `${Math.round(zoomRef.current * 100)}%`;
+    }
+  }, [image, slide.overlays, selection, selectedOverlayId, isDraggingOverlay]);
+
+  // RAF Debounce 래퍼
+  const scheduleDraw = useCallback(() => {
+    if (rafId.current === null) {
+      rafId.current = requestAnimationFrame(() => {
+        draw();
+        rafId.current = null;
+      });
+    }
   }, [draw]);
 
-  const getCanvasCoords = (e: React.MouseEvent | any): Point => {
+  useEffect(() => {
+    scheduleDraw();
+  }, [scheduleDraw]);
+
+  // 키보드 이동 이벤트 및 Blur(Sticky Key) 방지
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+      if (e.code === 'Space') {
+        if (isInput) return;
+        setIsSpacePressed(e.type === 'keydown');
+        if (e.type === 'keydown') e.preventDefault();
+        return;
+      }
+
+      if (e.type === 'keydown' && !isInput) {
+        let moved = false;
+        if (e.code === 'ArrowUp') { offsetRef.current = { ...offsetRef.current, y: offsetRef.current.y + PAN_STEP }; moved = true; e.preventDefault(); }
+        else if (e.code === 'ArrowDown') { offsetRef.current = { ...offsetRef.current, y: offsetRef.current.y - PAN_STEP }; moved = true; e.preventDefault(); }
+        else if (e.code === 'ArrowLeft') { offsetRef.current = { ...offsetRef.current, x: offsetRef.current.x + PAN_STEP }; moved = true; e.preventDefault(); }
+        else if (e.code === 'ArrowRight') { offsetRef.current = { ...offsetRef.current, x: offsetRef.current.x - PAN_STEP }; moved = true; e.preventDefault(); }
+
+        if (moved) {
+          setOffset(offsetRef.current);
+          scheduleDraw();
+        }
+      }
+    };
+    const handleBlur = () => setIsSpacePressed(false);
+    
+    window.addEventListener('keydown', handleKey);
+    window.addEventListener('keyup', handleKey);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      window.removeEventListener('keyup', handleKey);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [scheduleDraw]);
+
+  // 이미지 비동기 로딩 (Abort Controller 패턴)
+  useEffect(() => {
+    let isCancelled = false;
+    const img = new Image();
+    img.src = slide.dataUrl;
+    img.onload = () => {
+      if (isCancelled) return;
+      setImage(img);
+      if (containerRef.current) {
+        const { clientWidth, clientHeight } = containerRef.current;
+        const scale = Math.min((clientWidth - 80) / img.width, (clientHeight - 80) / img.height);
+        zoomRef.current = scale;
+        setZoom(scale);
+        const initialOffset = { x: (clientWidth - img.width * scale) / 2, y: (clientHeight - img.height * scale) / 2 };
+        offsetRef.current = initialOffset;
+        setOffset(initialOffset);
+        scheduleDraw();
+      }
+    };
+    return () => { isCancelled = true; };
+  }, [slide.dataUrl, scheduleDraw]);
+
+  // ResizeObserver 반응형 체인
+  useEffect(() => {
+    if (!containerRef.current || !image) return;
+    const observer = new ResizeObserver(() => {
+      scheduleDraw();
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [image, scheduleDraw]);
+
+  // 좌표 계산 유틸리티
+  const getCanvasCoords = (clientX: number, clientY: number): Point => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     return {
-      x: (e.clientX - rect.left - offsetRef.current.x) / zoomRef.current,
-      y: (e.clientY - rect.top - offsetRef.current.y) / zoomRef.current
+      x: (clientX - rect.left - offsetRef.current.x) / zoomRef.current,
+      y: (clientY - rect.top - offsetRef.current.y) / zoomRef.current
     };
   };
+  const getScreenCoords = (clientX: number, clientY: number): Point => ({ x: clientX, y: clientY });
 
-  const getScreenCoords = (e: React.MouseEvent | any): Point => ({ x: e.clientX, y: e.clientY });
-
-  const isPointInRect = (p: Point, rect: Rect) => {
-    return p.x >= rect.x && p.x <= rect.x + rect.width && p.y >= rect.y && p.y <= rect.y + rect.height;
-  };
+  const isPointInRect = (p: Point, rect: Rect) => p.x >= rect.x && p.x <= rect.x + rect.width && p.y >= rect.y && p.y <= rect.y + rect.height;
 
   const getHandleAt = (p: Point, rect: Rect): HandleType | null => {
     const tolerance = HANDLE_SIZE / zoomRef.current;
     const hx = [rect.x, rect.x + rect.width / 2, rect.x + rect.width];
     const hy = [rect.y, rect.y + rect.height / 2, rect.y + rect.height];
-    const types: (HandleType | null)[][] = [
-      ['nw', 'n', 'ne'],
-      ['w', null, 'e'],
-      ['sw', 's', 'se']
-    ];
+    const types: (HandleType | null)[][] = [['nw', 'n', 'ne'], ['w', null, 'e'], ['sw', 's', 'se']];
     for (let i = 0; i < 3; i++) {
       for (let j = 0; j < 3; j++) {
         const type = types[i][j];
@@ -312,17 +293,14 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     return null;
   };
 
-  // --- 🖱️ 마우스 이벤트 핸들러 ---
-  const handleMouseDown = (e: React.MouseEvent) => {
-    // 🖐️ 손 도구 활성화 시 단일 클릭/드래그가 평행 이동(Panning)으로 변경됩니다.
-    if (isHandTool || isSpacePressed || e.button === 1) {
+  // --- 이벤트 헨들러 로직 (Latest-Closure 방식을 위해 일반 함수로 정의 후 Ref로 위임) ---
+  const handleMouseDownRaw = (clientX: number, clientY: number, button: number = 0) => {
+    if (isHandTool || isSpacePressed || button === 1) {
       setIsPanning(true);
-      setStartPoint(getScreenCoords(e));
+      setStartPoint(getScreenCoords(clientX, clientY));
       return;
     }
-
-    const p = getCanvasCoords(e);
-    
+    const p = getCanvasCoords(clientX, clientY);
     if (selection) {
       const handle = getHandleAt(p, selection);
       if (handle) {
@@ -332,28 +310,26 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
         return;
       }
     }
-
     const clickedOverlay = [...slide.overlays].reverse().find(o => isPointInRect(p, o.rect));
     if (clickedOverlay) {
       onOverlaySelect(clickedOverlay.id);
       setIsDraggingOverlay(true);
+      dragOverlayDeltaRef.current = { dx: 0, dy: 0 };
       setStartPoint(p);
       setSelection(null);
       onSelectionChange(null);
       return;
     }
-
     onOverlaySelect(null);
     setIsDrawing(true);
-    const newSelection = { x: p.x, y: p.y, width: 0, height: 0 };
-    setSelection(newSelection);
+    setSelection({ x: p.x, y: p.y, width: 0, height: 0 });
     setStartPoint(p);
     onSelectionChange(null);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    const screenP = getScreenCoords(e);
-    const canvasP = getCanvasCoords(e);
+  const handleMouseMoveRaw = (clientX: number, clientY: number) => {
+    const screenP = getScreenCoords(clientX, clientY);
+    const canvasP = getCanvasCoords(clientX, clientY);
     
     if (canvasRef.current) {
       if (isHandTool || isSpacePressed || isPanning) canvasRef.current.style.cursor = isPanning ? 'grabbing' : 'grab';
@@ -364,46 +340,38 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
       else canvasRef.current.style.cursor = 'default';
     }
 
-    // 1. 화면 평행 이동(Panning) 처리
     if (isPanning && startPoint) {
       const dx = screenP.x - startPoint.x;
       const dy = screenP.y - startPoint.y;
       offsetRef.current = { x: offsetRef.current.x + dx, y: offsetRef.current.y + dy };
       setStartPoint(screenP);
-      requestAnimationFrame(draw);
+      scheduleDraw();
       return;
     }
 
-    // 🌟 [Figma 기능] 엣지 접근 시 자동 스크롤 (Boundary Auto-Panning)
     if ((isDrawing || isDraggingOverlay || isResizingSelection) && canvasRef.current) {
       const rect = canvasRef.current.getBoundingClientRect();
       const margin = 40;
       const panSpeed = 6;
-      let pdx = 0;
-      let pdy = 0;
-
-      if (e.clientX < rect.left + margin) pdx = panSpeed;
-      else if (e.clientX > rect.right - margin) pdx = -panSpeed;
-
-      if (e.clientY < rect.top + margin) pdy = panSpeed;
-      else if (e.clientY > rect.bottom - margin) pdy = -panSpeed;
+      let pdx = 0; let pdy = 0;
+      if (clientX < rect.left + margin) pdx = panSpeed;
+      else if (clientX > rect.right - margin) pdx = -panSpeed;
+      if (clientY < rect.top + margin) pdy = panSpeed;
+      else if (clientY > rect.bottom - margin) pdy = -panSpeed;
 
       if (pdx !== 0 || pdy !== 0) {
-        offsetRef.current = {
-          x: offsetRef.current.x + pdx,
-          y: offsetRef.current.y + pdy
-        };
-        requestAnimationFrame(draw);
+        offsetRef.current = { x: offsetRef.current.x + pdx, y: offsetRef.current.y + pdy };
+        scheduleDraw();
       }
     }
 
-    // 2. 영역 그리기 및 편집 처리
     if (isDrawing && startPoint) {
-      const x = Math.min(canvasP.x, startPoint.x);
-      const y = Math.min(canvasP.y, startPoint.y);
-      const width = Math.abs(canvasP.x - startPoint.x);
-      const height = Math.abs(canvasP.y - startPoint.y);
-      setSelection({ x, y, width, height });
+      setSelection({
+        x: Math.min(canvasP.x, startPoint.x),
+        y: Math.min(canvasP.y, startPoint.y),
+        width: Math.abs(canvasP.x - startPoint.x),
+        height: Math.abs(canvasP.y - startPoint.y)
+      });
     } else if (isResizingSelection && selection && startPoint && dragType) {
       const dx = canvasP.x - startPoint.x;
       const dy = canvasP.y - startPoint.y;
@@ -417,13 +385,12 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     } else if (isDraggingOverlay && selectedOverlayId && startPoint) {
       const dx = canvasP.x - startPoint.x;
       const dy = canvasP.y - startPoint.y;
-      const newOverlays = slide.overlays.map(ov => ov.id === selectedOverlayId ? { ...ov, rect: { ...ov.rect, x: ov.rect.x + dx, y: ov.rect.y + dy } } : ov);
-      onUpdateOverlays(newOverlays);
-      setStartPoint(canvasP);
+      dragOverlayDeltaRef.current = { dx, dy };
+      scheduleDraw();
     }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUpRaw = () => {
     if (isDrawing || isResizingSelection) {
       if (selection && (selection.width < MIN_RECT_SIZE || selection.height < MIN_RECT_SIZE)) {
         setSelection(null);
@@ -432,152 +399,123 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
         onSelectionChange(selection);
       }
     }
+    if (isDraggingOverlay && selectedOverlayId) {
+      // 드래그 종료 시점에 단 1번만 부모 상태 업데이트
+      const delta = dragOverlayDeltaRef.current;
+      if (delta.dx !== 0 || delta.dy !== 0) {
+        const newOverlays = slide.overlays.map(ov => 
+          ov.id === selectedOverlayId ? { ...ov, rect: { ...ov.rect, x: ov.rect.x + delta.dx, y: ov.rect.y + delta.dy } } : ov
+        );
+        onUpdateOverlays(newOverlays);
+        dragOverlayDeltaRef.current = { dx: 0, dy: 0 };
+      }
+    }
+
     setIsDrawing(false);
     setIsDraggingOverlay(false);
     setIsResizingSelection(false);
     setIsPanning(false);
     setStartPoint(null);
-    
-    // 최종 상태값 React에 기입
     setZoom(zoomRef.current);
     setOffset(offsetRef.current);
   };
 
-  // --- 📱 모바일/태블릿 터치 제스처 핸들러 ---
-  const getDistance = (p1: Point, p2: Point) => {
-    return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-  };
-
-  const getCenterPoint = (p1: Point, p2: Point): Point => {
-    return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-  };
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    if (e.touches.length === 1) {
-      // 1핑거 -> 마우스 오버레이 조작/그리기 시뮬레이션
-      const touch = e.touches[0];
-      const p = getCanvasCoords({ clientX: touch.clientX, clientY: touch.clientY });
+  const handleWheelNativeRaw = (e: WheelEvent) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const delta = -e.deltaY;
+      const factor = delta > 0 ? (1 + ZOOM_STEP) : (1 - ZOOM_STEP);
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
       
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const currentZoom = zoomRef.current;
+      const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, currentZoom * factor));
+      
+      const wx = (mouseX - offsetRef.current.x) / currentZoom;
+      const wy = (mouseY - offsetRef.current.y) / currentZoom;
+      
+      zoomRef.current = newZoom;
+      offsetRef.current = { x: mouseX - wx * newZoom, y: mouseY - wy * newZoom };
+      
+      setZoom(newZoom);
+      setOffset(offsetRef.current);
+      scheduleDraw();
+    } else if (!isSpacePressed) {
+      offsetRef.current = { x: offsetRef.current.x - e.deltaX, y: offsetRef.current.y - e.deltaY };
+      setOffset(offsetRef.current);
+      scheduleDraw();
+    }
+  };
+
+  const handleTouchStartRaw = (e: TouchEvent) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const p = getCanvasCoords(touch.clientX, touch.clientY);
       const isOverOverlay = slide.overlays.some(o => isPointInRect(p, o.rect));
       const isOverHandle = selection && getHandleAt(p, selection);
       
-      // 🖐️ 손 도구 활성화 되었거나 드래그 중인 게 없다면 브라우저 탄성 바운싱을 확실히 차단합니다.
-      if (isHandTool || isOverOverlay || isOverHandle || !isSpacePressed) {
-        e.preventDefault();
-      }
-
-      handleMouseDown({
-        clientX: touch.clientX,
-        clientY: touch.clientY,
-        button: 0,
-        preventDefault: () => {},
-        stopPropagation: () => {},
-      } as any);
+      if (isHandTool || isOverOverlay || isOverHandle || !isSpacePressed) e.preventDefault();
+      handleMouseDownRaw(touch.clientX, touch.clientY, 0);
     } else if (e.touches.length === 2) {
-      // 2핑거 -> 핀치 투 줌 & 팬 모드 활성화
       e.preventDefault();
-      setIsPanning(false);
-      setIsDrawing(false);
-      setIsDraggingOverlay(false);
-      setIsResizingSelection(false);
-
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      const p1 = { x: t1.clientX, y: t1.clientY };
-      const p2 = { x: t2.clientX, y: t2.clientY };
-
-      const dist = getDistance(p1, p2);
-      const center = getCenterPoint(p1, p2);
-
+      setIsPanning(false); setIsDrawing(false); setIsDraggingOverlay(false); setIsResizingSelection(false);
+      const t1 = e.touches[0]; const t2 = e.touches[1];
+      const p1 = { x: t1.clientX, y: t1.clientY }; const p2 = { x: t2.clientX, y: t2.clientY };
       touchStartRef.current = {
-        distance: dist,
+        distance: Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2)),
         zoom: zoomRef.current,
         offset: { ...offsetRef.current },
-        center: center
+        center: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }
       };
-      
-      // 전환 프레임 튀김 방지 락
       transitionFrameLock.current = 5;
     }
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
+  const handleTouchMoveRaw = (e: TouchEvent) => {
     if (e.touches.length === 1) {
-      const touch = e.touches[0];
-      
-      // 🖐️ 손도구 상태거나 활성 조작 시 기본 스크롤 완벽 차단
-      if (isHandTool || isDrawing || isDraggingOverlay || isResizingSelection) {
-        e.preventDefault();
-      }
-      
-      handleMouseMove({
-        clientX: touch.clientX,
-        clientY: touch.clientY,
-        preventDefault: () => {},
-      } as any);
+      if (isHandTool || isDrawing || isDraggingOverlay || isResizingSelection) e.preventDefault();
+      handleMouseMoveRaw(e.touches[0].clientX, e.touches[0].clientY);
     } else if (e.touches.length === 2 && touchStartRef.current) {
       e.preventDefault();
-      
-      if (transitionFrameLock.current > 0) {
-        transitionFrameLock.current--;
-        return;
-      }
+      if (transitionFrameLock.current > 0) { transitionFrameLock.current--; return; }
 
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      const p1 = { x: t1.clientX, y: t1.clientY };
-      const p2 = { x: t2.clientX, y: t2.clientY };
-
-      const currentDist = getDistance(p1, p2);
-      const currentCenter = getCenterPoint(p1, p2);
+      const t1 = e.touches[0]; const t2 = e.touches[1];
+      const p1 = { x: t1.clientX, y: t1.clientY }; const p2 = { x: t2.clientX, y: t2.clientY };
+      const currentDist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+      const currentCenter = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
 
       if (touchStartRef.current.distance > 2) {
         const factor = currentDist / touchStartRef.current.distance;
-        
-        // 1. 배율 계산 및 범위 제한
         const targetZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, touchStartRef.current.zoom * factor));
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (!rect) return;
         
-        // 2. 기준 핀치 초기 중심점 및 피벗 계산
-        const rect = canvas.getBoundingClientRect();
         const startCenterCanvasX = touchStartRef.current.center.x - rect.left;
         const startCenterCanvasY = touchStartRef.current.center.y - rect.top;
-
-        const startOffset = touchStartRef.current.offset;
-        const oldZoom = touchStartRef.current.zoom;
-
-        const wx = (startCenterCanvasX - startOffset.x) / oldZoom;
-        const wy = (startCenterCanvasY - startOffset.y) / oldZoom;
-
-        // 3. 중심점 실시간 이동 벡터 (드래그/팬 델타값)
+        const wx = (startCenterCanvasX - touchStartRef.current.offset.x) / touchStartRef.current.zoom;
+        const wy = (startCenterCanvasY - touchStartRef.current.offset.y) / touchStartRef.current.zoom;
         const dx = currentCenter.x - touchStartRef.current.center.x;
         const dy = currentCenter.y - touchStartRef.current.center.y;
 
-        // 4. 피벗 매트릭스에 델타 벡터를 더해 최종 스케일 오프셋 산출
         zoomRef.current = targetZoom;
         offsetRef.current = {
           x: startCenterCanvasX - wx * targetZoom + dx,
           y: startCenterCanvasY - wy * targetZoom + dy
         };
-
-        requestAnimationFrame(draw);
+        scheduleDraw();
       }
     }
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
+  const handleTouchEndRaw = (e: TouchEvent) => {
     if (e.touches.length === 0) {
       touchStartRef.current = null;
       setZoom(zoomRef.current);
       setOffset(offsetRef.current);
-      handleMouseUp();
+      handleMouseUpRaw();
     } else if (e.touches.length === 1) {
-      // 2개 손가락 중 하나를 떼었을 때 발생하는 급격한 변동 락 적용
       transitionFrameLock.current = 5;
       touchStartRef.current = null;
       setZoom(zoomRef.current);
@@ -585,141 +523,97 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({
     }
   };
 
-  // --- 📱 모바일/태블릿 수동 터치 리스너 결합 (passive: false를 위해 반드시 DOM 직접 등록 필요) ---
+  // --- handlersRef 위임 ---
+  const handlersRef = useRef({
+    handleMouseDownRaw, handleMouseMoveRaw, handleMouseUpRaw,
+    handleWheelNativeRaw, handleTouchStartRaw, handleTouchMoveRaw, handleTouchEndRaw
+  });
+  useEffect(() => {
+    handlersRef.current = {
+      handleMouseDownRaw, handleMouseMoveRaw, handleMouseUpRaw,
+      handleWheelNativeRaw, handleTouchStartRaw, handleTouchMoveRaw, handleTouchEndRaw
+    };
+  });
+
+  // DOM Event Thrashing 방어용 단발성 결합
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
 
-    const onTouchStart = (ev: TouchEvent) => {
-      handleTouchStart(ev as any);
-    };
+    const onWheel = (e: WheelEvent) => handlersRef.current.handleWheelNativeRaw(e);
+    const onTouchStart = (e: TouchEvent) => handlersRef.current.handleTouchStartRaw(e);
+    const onTouchMove = (e: TouchEvent) => handlersRef.current.handleTouchMoveRaw(e);
+    const onTouchEnd = (e: TouchEvent) => handlersRef.current.handleTouchEndRaw(e);
 
-    const onTouchMove = (ev: TouchEvent) => {
-      handleTouchMove(ev as any);
-    };
-
-    const onTouchEnd = (ev: TouchEvent) => {
-      handleTouchEnd(ev as any);
-    };
-
-    // { passive: false } 옵션을 부여해 브라우저 기본 제스처 줌을 완벽하게 오버라이드합니다.
+    container.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
     return () => {
+      container.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('touchstart', onTouchStart);
       canvas.removeEventListener('touchmove', onTouchMove);
       canvas.removeEventListener('touchend', onTouchEnd);
+      canvas.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [image, slide.overlays, selection, isSpacePressed, isHandTool, isDrawing, isDraggingOverlay, isResizingSelection, isPanning, startPoint]);
+  }, []);
+
+  // 글로벌 드래그 오버라이드 (마우스 이탈 대응)
+  useEffect(() => {
+    if (!isDrawing && !isDraggingOverlay && !isResizingSelection && !isPanning) return;
+    const onMouseMove = (e: MouseEvent) => handlersRef.current.handleMouseMoveRaw(e.clientX, e.clientY);
+    const onMouseUp = () => handlersRef.current.handleMouseUpRaw();
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isDrawing, isDraggingOverlay, isResizingSelection, isPanning]);
 
   return (
     <div ref={containerRef} className="flex-1 relative overflow-hidden bg-[#0f172a] flex items-center justify-center select-none touch-none">
       <canvas 
         ref={canvasRef} 
-        onMouseDown={handleMouseDown} 
-        onMouseMove={handleMouseMove} 
-        onMouseUp={handleMouseUp} 
-        onMouseLeave={handleMouseUp} 
+        onMouseDown={(e) => handlersRef.current.handleMouseDownRaw(e.clientX, e.clientY, e.button)}
         onContextMenu={(e) => e.preventDefault()} 
         className="block w-full h-full" 
       />
       
-      {/* 🧭 브라우저 조작 정보 인포바 (모바일은 터치 팁) */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-800/90 px-4 py-2.5 rounded-full text-[10px] font-medium text-slate-200 border border-slate-700 shadow-2xl pointer-events-none flex items-center gap-4 backdrop-blur-sm max-sm:hidden">
-        <div className="flex items-center gap-1.5">
-          <span className="bg-slate-700 px-1.5 py-0.5 rounded text-[9px] text-blue-400 font-bold">2-Finger / Space + Drag</span>
-          <span>화면 이동</span>
-        </div>
+        <div className="flex items-center gap-1.5"><span className="bg-slate-700 px-1.5 py-0.5 rounded text-[9px] text-blue-400 font-bold">2-Finger / Space + Drag</span><span>화면 이동</span></div>
         <div className="w-px h-3 bg-slate-600"></div>
-        <div className="flex items-center gap-1.5">
-          <span className="bg-slate-700 px-1.5 py-0.5 rounded text-[9px] text-blue-400 font-bold">Pinch / Ctrl + Wheel</span>
-          <span>확대/축소</span>
-        </div>
+        <div className="flex items-center gap-1.5"><span className="bg-slate-700 px-1.5 py-0.5 rounded text-[9px] text-blue-400 font-bold">Pinch / Ctrl + Wheel</span><span>확대/축소</span></div>
       </div>
 
-      {/* 🔍 플로팅 유리질감 줌 및 도구 컨트롤 툴바 */}
       <div className="absolute bottom-4 left-4 bg-slate-800/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700 shadow-2xl flex items-center gap-2.5 text-slate-200">
-        
-        {/* 🖐️ 손도구(Hand) / 선택도구(Select) 스위치 툴바 */}
         <div className="flex bg-slate-900/60 p-0.5 rounded-lg border border-slate-750 shrink-0">
-          <button 
-            onClick={() => setIsHandTool(false)}
-            className={`w-6 h-6 rounded flex items-center justify-center transition-all ${!isHandTool ? 'bg-slate-700 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
-            title="선택 도구 (Selection)"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="3 3 10.07 19.97 12.58 12.58 19.97 10.07 3 3" />
-            </svg>
+          <button onClick={() => setIsHandTool(false)} className={`w-6 h-6 rounded flex items-center justify-center transition-all ${!isHandTool ? 'bg-slate-700 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`} title="선택 도구 (Selection)">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 3 10.07 19.97 12.58 12.58 19.97 10.07 3 3" /></svg>
           </button>
-          <button 
-            onClick={() => setIsHandTool(true)}
-            className={`w-6 h-6 rounded flex items-center justify-center transition-all ${isHandTool ? 'bg-slate-700 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
-            title="손 도구 (Hand / Pan)"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5" />
-              <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v6" />
-              <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
-              <path d="M18 8a2 2 0 0 1 2 2v9a6 6 0 0 1-6 6v0a6 6 0 0 1-6-6v-1" />
-            </svg>
+          <button onClick={() => setIsHandTool(true)} className={`w-6 h-6 rounded flex items-center justify-center transition-all ${isHandTool ? 'bg-slate-700 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`} title="손 도구 (Hand / Pan)">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5" /><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v6" /><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" /><path d="M18 8a2 2 0 0 1 2 2v9a6 6 0 0 1-6 6v0a6 6 0 0 1-6-6v-1" /></svg>
           </button>
         </div>
         
         <div className="w-px h-4 bg-slate-700"></div>
 
-        <button 
-          onClick={() => {
-            const nextZoom = Math.max(MIN_ZOOM, zoomRef.current - 0.2);
-            zoomRef.current = nextZoom;
-            setZoom(nextZoom);
-            requestAnimationFrame(draw);
-          }}
-          className="w-6 h-6 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all text-sm font-black flex items-center justify-center"
-          title="축소"
-        >
-          -
-        </button>
-        <span className="text-[10px] font-black tracking-wider min-w-[36px] text-center">
-          {Math.round(zoomRef.current * 100)}%
-        </span>
-        <button 
-          onClick={() => {
-            const nextZoom = Math.min(MAX_ZOOM, zoomRef.current + 0.2);
-            zoomRef.current = nextZoom;
-            setZoom(nextZoom);
-            requestAnimationFrame(draw);
-          }}
-          className="w-6 h-6 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all text-sm font-black flex items-center justify-center"
-          title="확대"
-        >
-          +
-        </button>
+        <button onClick={() => { const nextZoom = Math.max(MIN_ZOOM, zoomRef.current - 0.2); zoomRef.current = nextZoom; setZoom(nextZoom); scheduleDraw(); }} className="w-6 h-6 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all text-sm font-black flex items-center justify-center" title="축소">-</button>
+        <span ref={zoomTextRef} className="text-[10px] font-black tracking-wider min-w-[36px] text-center">{Math.round(zoomRef.current * 100)}%</span>
+        <button onClick={() => { const nextZoom = Math.min(MAX_ZOOM, zoomRef.current + 0.2); zoomRef.current = nextZoom; setZoom(nextZoom); scheduleDraw(); }} className="w-6 h-6 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all text-sm font-black flex items-center justify-center" title="확대">+</button>
         <div className="w-px h-3 bg-slate-700"></div>
-        <button 
-          onClick={() => {
+        <button onClick={() => {
             if (containerRef.current && image) {
               const { clientWidth, clientHeight } = containerRef.current;
-              const scale = Math.min(
-                (clientWidth - 80) / image.width,
-                (clientHeight - 80) / image.height
-              );
+              const scale = Math.min((clientWidth - 80) / image.width, (clientHeight - 80) / image.height);
               zoomRef.current = scale;
-              offsetRef.current = {
-                x: (clientWidth - image.width * scale) / 2,
-                y: (clientHeight - image.height * scale) / 2
-              };
-              setZoom(scale);
-              setOffset(offsetRef.current);
-              requestAnimationFrame(draw);
+              offsetRef.current = { x: (clientWidth - image.width * scale) / 2, y: (clientHeight - image.height * scale) / 2 };
+              setZoom(scale); setOffset(offsetRef.current); scheduleDraw();
             }
-          }}
-          className="px-2 py-0.5 hover:bg-slate-700 rounded-lg text-[9px] font-bold text-blue-400 hover:text-blue-300 transition-all uppercase tracking-wider"
-          title="화면에 맞춤"
-        >
-          Fit
-        </button>
+          }} className="px-2 py-0.5 hover:bg-slate-700 rounded-lg text-[9px] font-bold text-blue-400 hover:text-blue-300 transition-all uppercase tracking-wider" title="화면에 맞춤">Fit</button>
       </div>
     </div>
   );

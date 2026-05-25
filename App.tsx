@@ -229,6 +229,7 @@ const App: React.FC = () => {
           selectedOverlayId={selectedOverlayId}
           onApplyOverlay={handleApplyOverlay} 
           onUpdateOverlays={handleUpdateOverlays}
+          onOverlaySelect={setSelectedOverlayId}
         />
       </main>
     </div>
